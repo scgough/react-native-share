@@ -16,6 +16,8 @@
 #endif
 
 #import "InstagramStories.h"
+#import <AVFoundation/AVFoundation.h>
+@import Photos;
 
 @implementation InstagramStories
 RCT_EXPORT_MODULE();
@@ -27,6 +29,22 @@ RCT_EXPORT_MODULE();
     if ([[UIApplication sharedApplication] canOpenURL:urlScheme]) {
         // Assign background image asset and attribution link URL to pasteboard
         NSArray *pasteboardItems = @[@{@"com.instagram.sharedSticker.backgroundImage" : backgroundImage, @"com.instagram.sharedSticker.contentURL" : attributionURL}];
+        NSDictionary *pasteboardOptions = @{UIPasteboardOptionExpirationDate : [[NSDate date] dateByAddingTimeInterval:60 * 5]};
+        // This call is iOS 10+, can use 'setItems' depending on what versions you support
+        [[UIPasteboard generalPasteboard] setItems:pasteboardItems options:pasteboardOptions];
+        [[UIApplication sharedApplication] openURL:urlScheme options:@{} completionHandler:nil];
+    } else { // Handle older app versions or app not installed case
+        [self fallbackInstagram];
+    }
+}
+
+- (void)backgroundVideo:(NSData *)backgroundVideo attributionURL:(NSString *)attributionURL {
+    // Verify app can open custom URL scheme, open if able
+    
+    NSURL *urlScheme = [NSURL URLWithString:@"instagram-stories://share"];
+    if ([[UIApplication sharedApplication] canOpenURL:urlScheme]) {
+        // Assign background image asset and attribution link URL to pasteboard
+        NSArray *pasteboardItems = @[@{@"com.instagram.sharedSticker.backgroundVideo" : backgroundVideo, @"com.instagram.sharedSticker.contentURL" : attributionURL}];
         NSDictionary *pasteboardOptions = @{UIPasteboardOptionExpirationDate : [[NSDate date] dateByAddingTimeInterval:60 * 5]};
         // This call is iOS 10+, can use 'setItems' depending on what versions you support
         [[UIPasteboard generalPasteboard] setItems:pasteboardItems options:pasteboardOptions];
@@ -82,6 +100,25 @@ backgroundBottomColor:(NSString *)backgroundBottomColor
     }
 }
 
+- (void)backgroundVideo:(NSData *)backgroundVideo stickerImage:(NSData *)stickerImage attributionURL:(NSString *)attributionURL
+{
+    // Verify app can open custom URL scheme. If able,
+    // assign assets to pasteboard, open scheme.
+    NSURL *urlScheme = [NSURL URLWithString:@"instagram-stories://share"];
+    if ([[UIApplication sharedApplication] canOpenURL:urlScheme]) {
+        // Assign background and sticker image assets and
+        // attribution link URL to pasteboard
+        NSArray *pasteboardItems = @[@{@"com.instagram.sharedSticker.backgroundVideo" : backgroundVideo, @"com.instagram.sharedSticker.stickerImage" : stickerImage, @"com.instagram.sharedSticker.contentURL" : attributionURL}];
+        NSDictionary *pasteboardOptions = @{UIPasteboardOptionExpirationDate : [[NSDate date] dateByAddingTimeInterval:60 * 5]};
+        // This call is iOS 10+, can use 'setItems' depending on what versions you support
+        [[UIPasteboard generalPasteboard] setItems:pasteboardItems options:pasteboardOptions];
+        [[UIApplication sharedApplication] openURL:urlScheme options:@{} completionHandler:nil];
+        
+    } else { // Handle older app versions or app not installed case
+        [self fallbackInstagram];
+    }
+}
+
 
 - (void)shareSingle:(NSDictionary *)options
     failureCallback:(RCTResponseErrorBlock)failureCallback
@@ -92,17 +129,61 @@ backgroundBottomColor:(NSString *)backgroundBottomColor
         attrURL = @"";
     }
     
+    PHImageRequestOptions *imgMgrOptions = [[PHImageRequestOptions alloc] init];
+    imgMgrOptions.synchronous = YES;
+    imgMgrOptions.version = PHImageRequestOptionsVersionCurrent;
+    imgMgrOptions.deliveryMode = PHImageRequestOptionsDeliveryModeOpportunistic;
+    imgMgrOptions.resizeMode = PHImageRequestOptionsResizeModeNone;
+    
     NSString *method = [RCTConvert NSString:options[@"method"]];
     if (method) {
         if([method isEqualToString:@"shareBackgroundImage"]) {
+            
+            __block UIImage *phAssetImage;
+            NSURL * testURL = [NSURL URLWithString: options[@"backgroundImage"]];
+            if([testURL.scheme.lowercaseString isEqualToString:@"ph"]) {
+                
+                NSString *assetIdentifier = [options[@"backgroundImage"] stringByReplacingOccurrencesOfString: @"ph://" withString: @""];
+                
+                PHFetchResult *fetchResult = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers: @[assetIdentifier] options:nil];
+                PHAsset *asset = fetchResult.firstObject;
+                
+                if (asset){
+                    switch(asset.mediaType) {
+                        case PHAssetMediaTypeImage: {
+                            [[PHImageManager defaultManager] requestImageForAsset:asset
+                               targetSize:PHImageManagerMaximumSize
+                              contentMode:PHImageContentModeDefault
+                                  options: imgMgrOptions
+                            resultHandler:^void(UIImage *image, NSDictionary *info) {
+                                phAssetImage = image;
+                            }];
+                            break;
+                        }
+                        default: {
+                            RCTLogError(@"Asset type can't be shared");
+                            return;
+                        }
+                    }
+                }
+            }
             
             NSURL *URL = [RCTConvert NSURL:options[@"backgroundImage"]];
             if (URL == nil) {
                 RCTLogError(@"key 'backgroundImage' missing in options");
             } else {
                 UIImage *image = [UIImage imageWithData: [NSData dataWithContentsOfURL:URL]];
+                if(image == nil && phAssetImage) {
+                    //we have a phasset - let's use it's image
+                    image = phAssetImage;
+                }
                 
-                [self backgroundImage:UIImagePNGRepresentation(image) attributionURL:attrURL];
+                if(image == nil) {
+                    RCTLogError(@"key 'backgroundImage' missing in options");
+                }
+                else {
+                    [self backgroundImage:UIImagePNGRepresentation(image) attributionURL:attrURL];
+                }
             }
         } else if([method isEqualToString:@"shareStickerImage"]) {
             RCTLog(@"method shareStickerImage");
@@ -126,17 +207,185 @@ backgroundBottomColor:(NSString *)backgroundBottomColor
             }
         } else if([method isEqualToString:@"shareBackgroundAndStickerImage"]) {
             RCTLog(@"method shareBackgroundAndStickerImage");
+
+            __block UIImage *phAssetImage;
+            NSURL * testURL = [NSURL URLWithString: options[@"backgroundImage"]];
+            if([testURL.scheme.lowercaseString isEqualToString:@"ph"]) {
+                
+                NSString *assetIdentifier = [options[@"backgroundImage"] stringByReplacingOccurrencesOfString: @"ph://" withString: @""];
+                
+                PHFetchResult *fetchResult = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers: @[assetIdentifier] options:nil];
+                PHAsset *asset = fetchResult.firstObject;
+                
+                if (asset){
+                    switch(asset.mediaType) {
+                        case PHAssetMediaTypeImage: {
+                            [[PHImageManager defaultManager] requestImageForAsset:asset
+                               targetSize:PHImageManagerMaximumSize
+                              contentMode:PHImageContentModeDefault
+                                  options: imgMgrOptions
+                            resultHandler:^void(UIImage *image, NSDictionary *info) {
+                                phAssetImage = image;
+                            }];
+                            break;
+                        }
+                        default: {
+                            RCTLogError(@"Asset type can't be shared");
+                            return;
+                        }
+                    }
+                }
+            }
             
             NSURL *backgroundURL = [RCTConvert NSURL:options[@"backgroundImage"]];
-            NSURL *sticketURL = [RCTConvert NSURL:options[@"stickerImage"]];
+            NSURL *stickerURL = [RCTConvert NSURL:options[@"stickerImage"]];
             
-            if (backgroundURL == nil || sticketURL == nil) {
+            if (backgroundURL == nil || stickerURL == nil) {
                 RCTLogError(@"key 'backgroundImage' or 'stickerImage' missing in options");
             } else {
                 UIImage *backgroundImage = [UIImage imageWithData: [NSData dataWithContentsOfURL:backgroundURL]];
-                UIImage *stickerImage = [UIImage imageWithData: [NSData dataWithContentsOfURL:sticketURL]];
+                if(backgroundImage == nil && phAssetImage) {
+                    //we have a phasset - let's use it's image
+                    backgroundImage = phAssetImage;
+                }
                 
-                [self backgroundImage:UIImagePNGRepresentation(backgroundImage) stickerImage:UIImagePNGRepresentation(stickerImage) attributionURL:attrURL];
+                if(backgroundImage == nil) {
+                    RCTLogError(@"key 'backgroundImage' missing in options");
+                }
+                else {
+                    UIImage *stickerImage = [UIImage imageWithData: [NSData dataWithContentsOfURL:stickerURL]];
+                    
+                    [self backgroundImage:UIImagePNGRepresentation(backgroundImage) stickerImage:UIImagePNGRepresentation(stickerImage) attributionURL:attrURL];
+                }
+            }
+        } else if([method isEqualToString:@"shareBackgroundVideo"]) {
+            
+            dispatch_semaphore_t    semaphore = dispatch_semaphore_create(0);
+            
+            __block NSString * stringURL = options[@"backgroundVideo"];
+            NSURL * testURL = [NSURL URLWithString: stringURL];
+            if([testURL.scheme.lowercaseString isEqualToString:@"ph"]) {
+                
+                NSString *assetIdentifier = [stringURL stringByReplacingOccurrencesOfString: @"ph://" withString: @""];
+                
+                PHFetchResult *fetchResult = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers: @[assetIdentifier] options:nil];
+                PHAsset *asset = fetchResult.firstObject;
+                
+                if (asset){
+                    switch(asset.mediaType) {
+                        case PHAssetMediaTypeVideo: {
+                            [[PHImageManager defaultManager] requestAVAssetForVideo:asset options:nil resultHandler:^(AVAsset *avAsset, AVAudioMix *audioMix, NSDictionary *info) {
+                                
+                                NSURL *url = (NSURL *)[[(AVURLAsset *)avAsset URL] fileReferenceURL];
+                                
+                                stringURL = [url absoluteString];
+                                
+                                dispatch_semaphore_signal(semaphore);
+                            }];
+                            
+                             break;
+                             
+                        }
+                        default: {
+                            RCTLogError(@"Asset type can't be shared");
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+            NSURL *URL = [RCTConvert NSURL:stringURL];
+                
+            if (URL == nil) {
+                RCTLogError(@"key 'backgroundVideo' missing in options");
+            }
+                
+            AVURLAsset* videoAsset = [AVURLAsset URLAssetWithURL:URL options:nil];
+            CMTime videoDuration = videoAsset.duration;
+            float videoDurationSeconds = CMTimeGetSeconds(videoDuration);
+
+            NSLog(@"Video duration: %f seconds for file %@", videoDurationSeconds, videoAsset.URL.absoluteString);
+                
+            if (videoDurationSeconds <= 60.0f) {
+                if(videoAsset) {
+                    NSData *videoData = [NSData dataWithContentsOfURL:URL];
+                    
+                    [self backgroundVideo:videoData attributionURL:attrURL];
+                }
+                else {
+                    RCTLogError(@"key 'backgroundVideo' not found");
+                }
+            } else {
+                RCTLogError(@"key 'backgroundVideo' too long");
+            }
+        }
+        else if([method isEqualToString:@"shareBackgroundVideoAndStickerImage"]) {
+            RCTLog(@"method shareBackgroundVideoAndStickerImage");
+            
+            dispatch_semaphore_t    semaphore = dispatch_semaphore_create(0);
+            
+            __block NSString * stringURL = options[@"backgroundVideo"];
+            NSURL * testURL = [NSURL URLWithString: stringURL];
+            if([testURL.scheme.lowercaseString isEqualToString:@"ph"]) {
+                
+                NSString *assetIdentifier = [stringURL stringByReplacingOccurrencesOfString: @"ph://" withString: @""];
+                
+                PHFetchResult *fetchResult = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers: @[assetIdentifier] options:nil];
+                PHAsset *asset = fetchResult.firstObject;
+                
+                if (asset){
+                    switch(asset.mediaType) {
+                        case PHAssetMediaTypeVideo: {
+                            [[PHImageManager defaultManager] requestAVAssetForVideo:asset options:nil resultHandler:^(AVAsset *avAsset, AVAudioMix *audioMix, NSDictionary *info) {
+                                
+                                NSURL *url = (NSURL *)[[(AVURLAsset *)avAsset URL] fileReferenceURL];
+                                
+                                stringURL = [url absoluteString];
+                                
+                                dispatch_semaphore_signal(semaphore);
+                            }];
+                            
+                             break;
+                             
+                        }
+                        default: {
+                            RCTLogError(@"Asset type can't be shared");
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+            NSURL *URL = [RCTConvert NSURL:stringURL];
+            NSURL *stickerURL = [RCTConvert NSURL:options[@"stickerImage"]];
+            
+            if (URL == nil || stickerURL == nil) {
+                RCTLogError(@"key 'backgroundVideo' or 'stickerImage' missing in options");
+            }
+                
+            AVURLAsset* videoAsset = [AVURLAsset URLAssetWithURL:URL options:nil];
+            CMTime videoDuration = videoAsset.duration;
+            float videoDurationSeconds = CMTimeGetSeconds(videoDuration);
+
+            NSLog(@"Video duration: %f seconds for file %@", videoDurationSeconds, videoAsset.URL.absoluteString);
+                
+            if (videoDurationSeconds <= 60.0f) {
+                if(videoAsset) {
+                    NSData *videoData = [NSData dataWithContentsOfURL:URL];
+                    
+                    UIImage *stickerImage = [UIImage imageWithData: [NSData dataWithContentsOfURL:stickerURL]];
+                    
+                    [self backgroundVideo:videoData
+                           stickerImage:UIImagePNGRepresentation(stickerImage)
+                           attributionURL:attrURL];
+                }
+                else {
+                    RCTLogError(@"key 'backgroundVideo' not found");
+                }
+            } else {
+                RCTLogError(@"key 'backgroundVideo' too long");
             }
         }
     } else {
@@ -158,4 +407,3 @@ backgroundBottomColor:(NSString *)backgroundBottomColor
 }
 // https://instagram.fhrk1-1.fna.fbcdn.net/vp/80c479ffc246a9320e614fa4def6a3dc/5C667D3F/t51.12442-15/e35/50679864_1663709050595244_6964601913751831460_n.jpg?_nc_ht=instagram.fhrk1-1.fna.fbcdn.net
 @end
-

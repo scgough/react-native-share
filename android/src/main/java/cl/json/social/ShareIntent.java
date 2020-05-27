@@ -6,17 +6,22 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Parcelable;
 import android.text.TextUtils;
 import android.content.pm.ResolveInfo;
 import android.content.ComponentName;
+import android.util.Base64;
 
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 
+import java.io.ByteArrayOutputStream;
 import java.io.UnsupportedEncodingException;
+import java.net.URL;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -123,6 +128,104 @@ public abstract class ShareIntent {
                 this.getIntent().putExtra("jid", chatAddress);
             }
         }
+        else if(socialType.equals("instagram")) {
+            this.setIntent(new Intent("com.instagram.share.ADD_TO_FEED"));
+            this.getIntent().setPackage("com.instagram.android");
+            this.getIntent().addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+            ShareFile fileShare = getFileShare(options);
+            if(fileShare.isFile()) {
+                Uri _uri = fileShare.getURI();
+                String _mimeType = "image/*";
+                if (_uri.toString().toLowerCase().contains(".mp4") || _uri.toString().toLowerCase().contains(".mov")) {
+                    _mimeType = "video/*";
+                }
+
+                this.getIntent().setDataAndType(_uri, _mimeType);
+                this.getIntent().putExtra(Intent.EXTRA_STREAM, _uri);
+
+                this.reactContext.getCurrentActivity().grantUriPermission(
+                        "com.instagram.android", _uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            }
+
+            if (options.hasKey("attributionLink") && !options.getString("attributionLink").isEmpty()) {
+                this.getIntent().putExtra("content_url", options.getString("attributionLink"));
+            }
+        }
+        else if(socialType.equals("instagram_stories")) {
+            //ig stories keys
+            this.setIntent(new Intent("com.instagram.share.ADD_TO_STORY"));
+            this.getIntent().setPackage("com.instagram.android");
+
+            ShareFile fileShare = getFileShare(options);
+            if(fileShare.isFile()) {
+                Uri _uri = fileShare.getURI();
+                String _mimeType = "image/*";
+                if(ShareIntent.hasValidKey("backgroundImage", options)) {
+                    if (_uri.toString().toLowerCase().contains(".png")) {
+                        _mimeType = "image/png";
+                    }
+                    else if(_uri.toString().toLowerCase().contains("jpg") || _uri.toString().contains("jpeg")) {
+                        _mimeType = "image/jpeg";
+                    }
+                }
+                else if(ShareIntent.hasValidKey("backgroundVideo", options)) {
+                    _mimeType = "video/*";
+                    if (_uri.toString().toLowerCase().contains(".mp4")) {
+                        _mimeType = "video/mp4";
+                    } else if (_uri.toString().toLowerCase().contains(".mov")) {
+                        _mimeType = "video/quicktime";
+                    }
+                }
+                this.getIntent().setDataAndType(_uri, _mimeType);
+                this.getIntent().putExtra(Intent.EXTRA_STREAM, _uri);
+                if (options.hasKey("stickerImage") && !options.getString("stickerImage").isEmpty()) {
+                    ShareFile stickerFile = null;
+                    String stickerSourceUrl = options.getString("stickerImage");
+                    if(stickerSourceUrl.startsWith("http")) {
+                        //we have an external file - download it and encode to base64
+                        try {
+                            URL url = new URL(stickerSourceUrl);
+                            String url_ext = "png";
+                            try {
+                                url_ext = stickerSourceUrl.substring(stickerSourceUrl.lastIndexOf(".") + 1);
+                            }
+                            catch (Exception e){}
+                            Bitmap bitmap = BitmapFactory.decodeStream(url.openConnection().getInputStream());
+                            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, byteArrayOutputStream);
+                            stickerSourceUrl = "data:image/" + url_ext + ";base64," + Base64.encodeToString(byteArrayOutputStream.toByteArray(), Base64.DEFAULT);
+                        }
+                        catch (Exception e){}
+                    }
+
+                    stickerFile = getFileShare(stickerSourceUrl, null);
+                    if(stickerFile.isFile()) {
+                        Uri _stickerFileUri = stickerFile.getURI();
+                        this.getIntent().putExtra("interactive_asset_uri", _stickerFileUri);
+                        this.reactContext.getCurrentActivity().grantUriPermission(
+                                "com.instagram.android", _stickerFileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    }
+                }
+
+                this.reactContext.getCurrentActivity().grantUriPermission(
+                            "com.instagram.android", _uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                this.getIntent().addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                if (options.hasKey("backgroundBottomColor") && !options.getString("backgroundBottomColor").isEmpty()) {
+                    this.getIntent().putExtra("bottom_background_color", options.getString("backgroundBottomColor"));
+                }
+
+                if (options.hasKey("backgroundTopColor") && !options.getString("backgroundTopColor").isEmpty()) {
+                    this.getIntent().putExtra("top_background_color", options.getString("backgroundTopColor"));
+                }
+
+                if (options.hasKey("attributionLink") && !options.getString("attributionLink").isEmpty()) {
+                    this.getIntent().putExtra("content_url", options.getString("attributionLink"));
+                }
+            }
+        }
 
 
         if (ShareIntent.hasValidKey("urls", options)) {
@@ -166,15 +269,27 @@ public abstract class ShareIntent {
         }
     }
 
+    protected ShareFile getFileShare(String url, String filename) {
+        return new ShareFile(url, filename, this.reactContext);
+    }
+
     protected ShareFile getFileShare(ReadableMap options) {
          String filename = null;
         if (ShareIntent.hasValidKey("filename", options)) {
             filename = options.getString("filename");
         }
-        if (ShareIntent.hasValidKey("type", options)) {
-            return new ShareFile(options.getString("url"), options.getString("type"), filename, this.reactContext);
-        } else {
-            return new ShareFile(options.getString("url"), filename, this.reactContext);
+        if(ShareIntent.hasValidKey("backgroundImage", options)) {
+            return new ShareFile(options.getString("url"), options.getString("type"), filename, this.reactContext);	            return new ShareFile(options.getString("backgroundImage"), filename, this.reactContext);
+        } else {	        }
+            return new ShareFile(options.getString("url"), filename, this.reactContext);	        else if(ShareIntent.hasValidKey("backgroundVideo", options)) {
+            return new ShareFile(options.getString("backgroundVideo"), filename, this.reactContext);
+        }
+        else {
+            if (ShareIntent.hasValidKey("type", options)) {
+                return new ShareFile(options.getString("url"), options.getString("type"), filename, this.reactContext);
+            } else {
+                return new ShareFile(options.getString("url"), filename, this.reactContext);
+            }
         }
     }
 

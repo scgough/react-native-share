@@ -67,7 +67,8 @@ public class RNShareModule extends ReactContextBaseJavaModule implements Activit
         messenger,
         snapchat,
         sms,
-        linkedin;
+        linkedin,
+        instagram_stories;
 
 
         public static ShareIntent getShareClass(String social, ReactApplicationContext reactContext) {
@@ -84,6 +85,7 @@ public class RNShareModule extends ReactContextBaseJavaModule implements Activit
                 case whatsapp:
                     return new WhatsAppShare(reactContext);
                 case instagram:
+                case instagram_stories:
                     return new InstagramShare(reactContext);
                 case googleplus:
                     return new GooglePlusShare(reactContext);

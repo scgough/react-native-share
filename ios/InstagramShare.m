@@ -17,7 +17,36 @@
     
     NSLog(@"Try open view");
 
-    NSURL * fileURL = [NSURL URLWithString: options[@"url"]];
+    __block NSString * stringURL = options[@"url"];
+    NSURL * testURL = [NSURL URLWithString: stringURL];
+    
+    if([testURL.scheme.lowercaseString isEqualToString:@"ph"]) {
+        NSString *assetIdentifier = [stringURL stringByReplacingOccurrencesOfString: @"ph://" withString: @""];
+        
+        PHFetchResult *fetchResult = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers: @[assetIdentifier] options:nil];
+        PHAsset *asset = fetchResult.firstObject;
+        
+        if (asset){
+            switch(asset.mediaType) {
+                case PHAssetMediaTypeImage: {
+                    stringURL = [NSString stringWithFormat:@"assets-library://asset/asset.jpeg?id=%@", assetIdentifier];
+                    break;
+                }
+                case PHAssetMediaTypeVideo: {
+                    stringURL = [NSString stringWithFormat:@"assets-library://asset/asset.mp4?id=%@", assetIdentifier];
+                    break;
+                }
+                default: {
+                    RCTLogError(@"Asset type can't be shared");
+                    return;
+                }
+            }
+            
+        }
+    }
+    
+    NSURL * fileURL = [NSURL URLWithString: stringURL];
+    
     AVURLAsset* videoAsset = [AVURLAsset URLAssetWithURL:fileURL options:nil];
     CMTime videoDuration = videoAsset.duration;
     float videoDurationSeconds = CMTimeGetSeconds(videoDuration);
@@ -27,7 +56,7 @@
     NSURL * shareURL;
     // Instagram doesn't allow sharing videos longer than 60 seconds on iOS anymore. (next button is not responding, trim is unavailable)
     if (videoDurationSeconds <= 60.0f) {
-        NSString * urlString = [NSString stringWithFormat:@"instagram://library?AssetPath=%@", options[@"url"]];
+        NSString * urlString = [NSString stringWithFormat:@"instagram://library?AssetPath=%@", stringURL];
         shareURL = [NSURL URLWithString:urlString];
     } else {
         shareURL = [NSURL URLWithString:@"instagram://camera"];
@@ -49,7 +78,7 @@
         
         NSLog(@"%@", errorMessage);
         failureCallback(error);
-    } 
+    }
 }
 
 - (void)shareSingleImage:(NSDictionary *)options
